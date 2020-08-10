@@ -38,6 +38,8 @@ class MoonGoT:
         self.temp = None
         self.humid = None
         self.k1 = None
+        self.gt_lin = None
+        self.gt_db = None
         # Boltzmanns constant (m^2 kg s^-2 K^-1)
         self.k_bolt = 1.38064852e-23
         # Plancks constant (m^2 kg s^-1)
@@ -335,6 +337,10 @@ class MoonGoT:
         '''Lets print what we have done.'''
         if self.k1 is None:
             self.k1 = 0.0
+        if self.gt_lin is None:
+            self.gt_lin = 0.0
+        if self.gt_db is None:
+            self.gt_db = 0.0
         compose = [
                 "{:16} {:>11.4f} {:<13}".format('Distance', self.distance, ''),
                 "{:16} {:>11.4f} {:<13}".format('Wavelength', self.wavelength, 'm'),
