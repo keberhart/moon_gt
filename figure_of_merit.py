@@ -47,7 +47,7 @@ class MoonGoT:
         self.moon_dia_km = 3476
 
         # Configure and pre-calculate a bit
-        self.ts = load.timescale()
+        self.ts = load.timescale(builtin=True)
 
         self.e = load('de421.bsp')
         self.earth, self.luna = self.e['earth'], self.e['moon']
@@ -89,6 +89,11 @@ class MoonGoT:
             self.theta_moon()
             self.calc_g_over_t()
 
+    def set_dtg(self, date=None):
+        if date is None:
+            self.t = self.ts.now()
+        else:
+            self.t = self.ts.from_datetime(date)
 
     def phi(self, time=None):
         '''Calculate the lunar phase angle in degrees'''
@@ -123,7 +128,7 @@ class MoonGoT:
     def calc_t_moon(self, deg, f=None):
         # The average brightness temperature of the Moon in (K)
         # f is frequency in Hz
-        # deg is phi, the lunar phase angle in degrees 
+        # deg is phi, the lunar phase angle in degrees
         #   - if phase angle is degreasing use 360 - phi
         #
         # from equation [4.14 - 4.16]
@@ -141,7 +146,11 @@ class MoonGoT:
 
         self.t0 = 207.7 + (24.43/(f*10**-9))
 
+#       from the paper
         self.t1overt0 = 0.004212 * math.pow((f*10**-9),1.224)
+
+#       From our moon spreadsheet
+#        self.t1overt0 = 0.004212 * (f*10**-9) * math.pow(math.e, 1.224)
 
         self.psi = 43.83 / (1 + 0.0109 * (f*10**-9))
 
@@ -211,23 +220,23 @@ class MoonGoT:
 
         if self.hpbw/moonbw > 1:
             # When the source is narrower than the HPBW from the DOC study
-#            x2 = 0.6441*math.pow(moonbw/self.hpbw, 2)
-#            self.k2est = (1 - math.pow(math.e, -x2))/x2
+            x2 = 0.6441*math.pow(moonbw/self.hpbw, 2)
+            self.k2est = x2 / (1 - math.pow(math.e, -x2))
 
             # from our sun worksheet not sure of its origin, I wouldn't expect
             # it to work in this case...
 #            self.k2est = math.pow(1 + .18 * math.pow(self.theta/self.hpbw, 2), 2)
 
             # from our cas-a worksheet, from Datron we think
-            x2 = (self.hpbw*60)
-            self.k2est = (1-0.041025/x2
-                    +8.00685/math.pow(x2, 2)
-                    -10.673775/math.pow(x2, 3)
-                    +41.662351/math.pow(x2, 4))
+#            x2 = (self.hpbw*60)
+#            self.k2est = (1-0.041025/x2
+#                    +8.00685/math.pow(x2, 2)
+#                    -10.673775/math.pow(x2, 3)
+#                    +41.662351/math.pow(x2, 4))
         else:
             # when the source is wider than the HPBW
             common_bit = math.log(2) * math.pow(moonbw/self.hpbw, 2)
-            self.k2est = common_bit / 1 - (1 / math.pow(math.e, common_bit))
+            self.k2est = common_bit / 1 - math.exp(-common_bit)
 
         return self.k2est
 
@@ -255,10 +264,7 @@ class MoonGoT:
         self.calc_wavelength()
 
         if k1 is None:
-            if self.temp is None:
-                k1 = 1.03
-            else:
-                k1 = self.calc_k1()
+            k1 = self.calc_k1()
         else:
             self.k1 = k1
         if k2 is None:
@@ -278,42 +284,57 @@ class MoonGoT:
 
     def calc_k1(self):
         '''Calculate the k1 atmospheric attenuation value.'''
-        # this uses the cool itur equations, but it is really slow...
-        T = self.temp * itur.u.deg_C
-        P = self.press * itur.u.hPa
-        H = self.humid
-        f = (self.frequency*10**-9) * itur.u.GHz
-        el = self.elevation
-        hs = (self.alt*10**-3) * itur.u.km
-        D = self.diam * itur.u.m
-        p = 0.1
+        if self.temp is None:
+            # estimate the k1 based on our spreadsheet and my school notes
+            if (7.0 < (self.frequency*10**-9) < 9.0):
+                A_t = 0.060
+            elif (1.0 < (self.frequency*10**-9) < 3.0):
+                A_t = 0.032
+            else:
+                A_t = 10*math.log(1 + (1/self.elevation.value))
+            k1 = math.pow(math.e, (+A_t/(
+                4.343 * math.sin(+(self.elevation.value*math.pi/180)))))
+            self.k1 = self.db_to_lin(k1)
+        else:
+            # this uses the cool itur equations, but it is really slow...
+            T = self.temp * itur.u.deg_C
+            P = self.press * itur.u.hPa
+            H = self.humid
+            f = (self.frequency*10**-9) * itur.u.GHz
+            el = self.elevation
+            hs = (self.alt*10**-3) * itur.u.km
+            D = self.diam * itur.u.m
+            p = 0.1
 
-        # calculated atmospheric parameters
-        rho_p = itur.surface_water_vapour_density(self.lat, self.lon, p, hs)
+            # calculated atmospheric parameters
+            rho_p = itur.surface_water_vapour_density(self.lat, self.lon, p, hs)
 
-        # compute attenuation values
-#        A_g = itur.gaseous_attenuation_slant_path(f, el, rho_p, P, T)
-#        A_r = itur.rain_attenuation(lat, lon, f, el, hs=hs, p=p)
-#        A_c = itur.cloud_attenuation(lat, lon, el, f, p)
-#        A_s = itur.scintillation_attenuation(lat, lon, f, el, p, D)
-        A_t = itur.atmospheric_attenuation_slant_path(self.lat, self.lon, f, el,
-                p, D, hs=hs, rho=rho_p, T=T, H=H, P=P)
+            # compute attenuation values
+    #        A_g = itur.gaseous_attenuation_slant_path(f, el, rho_p, P, T)
+    #        A_r = itur.rain_attenuation(lat, lon, f, el, hs=hs, p=p)
+    #        A_c = itur.cloud_attenuation(lat, lon, el, f, p)
+    #        A_s = itur.scintillation_attenuation(lat, lon, f, el, p, D)
+            A_t = itur.atmospheric_attenuation_slant_path(self.lat, self.lon, f, el,
+                    p, D, hs=hs, rho=rho_p, T=T, H=H, P=P)
 
-#        print("\n")
-#        print("- Rain attenuation          ", A_r, " dB")
-#        print("- Gaseous attenuation       ", A_g, " dB")
-#        print("- Cloud attenuation         ", A_c, " dB")
-#        print("- Scintillation attenuation ", A_s, " dB")
-#        print("- Total attenuation         ", A_t, " dB")
+    #        print("\n")
+    #        print("- Rain attenuation          ", A_r, " dB")
+    #        print("- Gaseous attenuation       ", A_g, " dB")
+    #        print("- Cloud attenuation         ", A_c, " dB")
+    #        print("- Scintillation attenuation ", A_s, " dB")
+    #        print("- Total attenuation         ", A_t, " dB")
 
-        print A_t
-        print A_t.value
+            print A_t
+            print A_t.value
 
-        self.k1 = self.db_to_lin(A_t.value)
+            self.k1 = self.db_to_lin(A_t.value)
+
         return self.k1
 
     def __str__(self):
         '''Lets print what we have done.'''
+        if self.k1 is None:
+            self.k1 = 0.0
         compose = [
                 "{:16} {:>11.4f} {:<13}".format('Distance', self.distance, ''),
                 "{:16} {:>11.4f} {:<13}".format('Wavelength', self.wavelength, 'm'),
